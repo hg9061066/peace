@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peace · Sukoon — Romantic Indie Vinyl</title>
+  <meta name="description" content="A dreamy retro turntable playing soft romantic Pakistani and Indian indie classics on loop.">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=2.0">
+</head>
+<body>
+  <!-- ===== Ambient Scene ===== -->
+  <div class="scene-backdrop">
+    <div class="scene-image"></div>
+    <div class="scene-overlay"></div>
+    <canvas id="bokehCanvas" class="bokeh-canvas"></canvas>
+  </div>
+
+  <div class="app-wrap">
+
+    <!-- ===== Top Bar ===== -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <div class="brand-icon">♫</div>
+        <div>
+          <div class="brand-name">PEACE · SUKOON</div>
+          <div class="brand-sub">Pakistani &amp; Indian Indie</div>
+        </div>
+      </div>
+
+      <nav class="topbar-nav">
+        <button id="rainToggle" class="nav-pill" aria-pressed="false" title="Rain ambiance">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a9 9 0 0 0-9 9c0 4.97 9 21 9 21s9-16.03 9-21a9 9 0 0 0-9-9zm0 12a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" opacity=".4"/><path d="M12 1C7.03 1 3 5.03 3 10c0 2.62 1.39 5.53 2.64 7.87C7.79 22.1 10.31 26.02 12 28c1.69-1.98 4.21-5.9 6.36-10.13C19.61 15.53 21 12.62 21 10c0-4.97-4.03-9-9-9zm0 13a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+          Rain
+        </button>
+        <button id="themeToggle" class="nav-pill" title="Switch mood theme">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
+          <span id="themeLabel">Twilight</span>
+        </button>
+        <button id="customPlBtn" class="nav-pill outline" title="Custom playlist">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+          Playlist
+        </button>
+      </nav>
+    </header>
+
+    <!-- ===== Main Layout ===== -->
+    <main class="main-grid">
+
+      <!-- ===== Player Panel ===== -->
+      <section class="player-panel" id="deck" aria-label="Vinyl Player">
+
+        <!-- Deck Header -->
+        <div class="deck-header">
+          <div>
+            <span class="deck-brand">PEACE HI-FI</span>
+            <span class="deck-model">TUBE STEREO · 33⅓ RPM</span>
+          </div>
+          <div class="deck-badge">
+            <span class="badge-dot"></span>
+            <span id="deckStateBadge">READY</span>
+          </div>
+        </div>
+
+        <!-- Turntable Platter -->
+        <div class="platter-stage">
+          <div class="platter-glow"></div>
+
+          <div class="platter-rim">
+            <div id="record" class="vinyl">
+              <div class="vinyl-grooves"></div>
+              <div class="vinyl-sheen"></div>
+              <div class="vinyl-label">
+                <div class="label-art" style="background-image:url('assets/vinyl_center.jpg')"></div>
+                <div class="label-hole"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tonearm -->
+          <div id="tonearm" class="tonearm">
+            <div class="arm-pivot"></div>
+            <div class="arm-body"></div>
+            <div class="arm-head">
+              <div class="stylus-tip"></div>
+            </div>
+          </div>
+
+          <!-- Start Overlay -->
+          <button id="start" class="start-overlay">
+            <div class="start-ring"></div>
+            <div class="start-play">▶</div>
+            <span id="start-text">Start Listening</span>
+            <span class="start-hint">Click to play · or choose a song →</span>
+          </button>
+        </div>
+
+        <!-- Now Playing Info -->
+        <div class="now-playing">
+          <div class="np-tags">
+            <span id="trackOriginBadge" class="tag tag-origin">Pakistani &amp; Indian Indie</span>
+            <span id="trackMoodBadge" class="tag tag-mood">Soft Romantic</span>
+          </div>
+          <h1 id="title" class="np-title">Nothing playing yet</h1>
+          <p id="artist" class="np-artist">Select a song to begin</p>
+          <p id="quote" class="np-quote">"Woh shaam, hawaaon ki narmi aur sukoon bhari dhun..."</p>
+          <p id="status" class="np-status">Ready</p>
+        </div>
+
+        <!-- Visualizer -->
+        <div class="visualizer" id="visualizer">
+          <span class="vbar"></span><span class="vbar"></span><span class="vbar"></span>
+          <span class="vbar"></span><span class="vbar"></span><span class="vbar"></span>
+          <span class="vbar"></span><span class="vbar"></span><span class="vbar"></span>
+          <span class="vbar"></span><span class="vbar"></span><span class="vbar"></span>
+          <span class="vbar"></span><span class="vbar"></span><span class="vbar"></span>
+          <span class="vbar"></span>
+        </div>
+
+        <!-- Seek -->
+        <div class="seek-row">
+          <span id="elapsed" class="time">0:00</span>
+          <div class="seek-track">
+            <div id="seekFill" class="seek-progress"></div>
+            <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+          </div>
+          <span id="duration" class="time">0:00</span>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls-row">
+          <button id="shuffle" class="ctrl-btn ctrl-sm active" aria-pressed="true" title="Shuffle">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+          </button>
+          <button id="prev" class="ctrl-btn ctrl-md" title="Previous">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+          </button>
+          <button id="play" class="ctrl-btn ctrl-play" aria-label="Play/Pause">
+            <svg id="playIconSvg" viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <button id="next" class="ctrl-btn ctrl-md" title="Next">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+          </button>
+          <button id="loop" class="ctrl-btn ctrl-sm" aria-pressed="false" title="Loop">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+          </button>
+        </div>
+
+        <!-- Volume -->
+        <div class="vol-row">
+          <button id="muteBtn" class="vol-icon" title="Mute">
+            <svg id="volumeIcon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+          </button>
+          <div class="vol-track">
+            <div id="volumeFill" class="vol-fill" style="width:80%"></div>
+            <input id="volume" type="range" min="0" max="100" value="80" aria-label="Volume">
+          </div>
+          <span id="volumePercent" class="vol-pct">80%</span>
+        </div>
+
+        <!-- Video Toggle -->
+        <div class="video-toggle-row">
+          <span class="video-label">🎬 Video</span>
+          <button id="toggleScreenBtn" class="toggle-link">Show</button>
+        </div>
+        <div id="screenCollapsible" class="video-frame collapsed">
+          <div id="player"></div>
+        </div>
+
+      </section>
+
+      <!-- ===== Playlist Panel ===== -->
+      <aside class="playlist-panel" aria-label="Playlist">
+
+        <div class="pl-header">
+          <div class="pl-title-row">
+            <h2 class="pl-title">Peace Playlist</h2>
+            <span id="count" class="pl-count">24 songs</span>
+          </div>
+          <p class="pl-desc">Soft romantic Pakistani &amp; Indian indie gems</p>
+
+          <div class="pl-search">
+            <svg class="search-icon" viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <input id="searchInput" type="search" placeholder="Search songs, artists, moods…" autocomplete="off">
+          </div>
+
+          <div class="filter-row">
+            <button class="ftab active" data-filter="all">All</button>
+            <button class="ftab" data-filter="pakistani">🇵🇰 Pakistani</button>
+            <button class="ftab" data-filter="indian">🇮🇳 Indian</button>
+            <button class="ftab" data-filter="coke-studio">🎙 Coke Studio</button>
+          </div>
+        </div>
+
+        <ul id="list" class="pl-list"></ul>
+
+        <div class="pl-footer">
+          <kbd>Space</kbd> play/pause &nbsp;·&nbsp; <kbd>←</kbd><kbd>→</kbd> prev/next
+        </div>
+
+      </aside>
+    </main>
+  </div>
+
+  <!-- Custom Playlist Modal -->
+  <div id="customModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-box">
+      <div class="modal-top">
+        <h3>Custom Playlist</h3>
+        <button id="closeModalBtn" class="modal-close" aria-label="Close">✕</button>
+      </div>
+      <p class="modal-desc">Paste a YouTube playlist URL or ID to spin it on this turntable.</p>
+      <input id="customPlInput" type="text" class="modal-input" placeholder="https://youtube.com/playlist?list=PLexDPGLDp4lQ">
+      <div class="modal-btns">
+        <button id="resetCuratedBtn" class="nav-pill outline">Reset to Default (Peace)</button>
+        <button id="applyCustomPlBtn" class="nav-pill primary">Load Playlist</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="rainAudio" loop preload="none">
+    <source src="https://assets.mixkit.co/active_storage/sfx/1253/1253-preview.mp3" type="audio/mpeg">
+  </audio>
+
+  <script src="app.js?v=2.0"></script>
+</body>
+</html>

@@ -92,6 +92,9 @@ let queue = [];
 let pos = -1;
 let currentIdx = -1;
 
+// Listening Room (room.js) takes over playback while "Listen together" is on.
+const roomHook = () => (window.PeaceRoomHook && window.PeaceRoomHook.active) ? window.PeaceRoomHook : null;
+
 // ---- Helpers ----
 const fmt = s => { s = Math.max(0, Math.floor(s||0)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; };
 function shuffle(arr) {
@@ -125,6 +128,7 @@ function playQueuePos(qp) {
 
 function next() {
   if (!playerReady) return;
+  const rh = roomHook(); if (rh) { rh.next(); return; }
   if (loopOne && currentIdx >= 0) { player.seekTo(0,true); player.playVideo(); return; }
   if (pos+1 < queue.length) { playQueuePos(pos+1); }
   else {
@@ -137,12 +141,14 @@ function next() {
 
 function prev() {
   if (!playerReady) return;
+  const rh = roomHook(); if (rh) { rh.prev(); return; }
   if (player.getCurrentTime()>3 || pos<=0) player.seekTo(0,true);
   else playQueuePos(pos-1);
 }
 
 function startPlay() {
   if (!playerReady) return;
+  const rh = roomHook(); if (rh) { rh.start(); return; }
   const first = shuffleOn ? Math.floor(Math.random()*tracks.length) : 0;
   buildQueue(first); playQueuePos(0);
 }
@@ -225,7 +231,11 @@ function renderList() {
       </div>
       <div class="row-eq"><span></span><span></span><span></span></div>
     `;
-    btn.addEventListener("click", () => { buildQueue(origIdx); playQueuePos(0); });
+    btn.addEventListener("click", () => {
+      const rh = roomHook();
+      if (rh) { rh.playExternal(tracks[origIdx]); return; }
+      buildQueue(origIdx); playQueuePos(0);
+    });
     li.appendChild(btn);
     el.list.appendChild(li);
   });
@@ -252,14 +262,17 @@ window.onYouTubeIframeAPIReady = () => {
       },
       onStateChange(e) {
         const S = YT.PlayerState;
+        const rh = roomHook();
+        if (rh) rh.onPlayerState(e.data);
         if (e.data===S.PLAYING) setPlayingUI(true);
         else if (e.data===S.PAUSED) setPlayingUI(false);
         else if (e.data===S.BUFFERING) { el.status.textContent="Loading…"; }
-        else if (e.data===S.ENDED) next();
+        else if (e.data===S.ENDED) { rh ? rh.onEnded(false) : next(); }
       },
       onError() {
         el.status.textContent="Can't play this song here, skipping…";
-        setTimeout(next, 800);
+        const rh = roomHook();
+        setTimeout(() => rh ? rh.onEnded(true) : next(), 800);
       }
     }
   });
@@ -314,7 +327,11 @@ el.seek.addEventListener("input", () => {
   el.seekFill.style.width = `${frac*100}%`;
 });
 el.seek.addEventListener("change", () => {
-  if (playerReady && started) player.seekTo((el.seek.value/1000)*player.getDuration(), true);
+  if (playerReady && started) {
+    const target = (el.seek.value/1000)*player.getDuration();
+    player.seekTo(target, true);
+    const rh = roomHook(); if (rh) rh.onSeek(target);
+  }
   seeking = false;
 });
 
@@ -448,6 +465,56 @@ function initBokeh() {
     requestAnimationFrame(draw);
   })();
 }
+
+// ---- Room bridge (used by room.js) ----
+function showCustomTrack(t) {
+  currentIdx = tracks.findIndex(x => x.id === t.id);
+  el.title.textContent = t.title || "Untitled";
+  el.artist.textContent = t.artist || "Shared in the room";
+  el.quote.textContent = t.quote ? `"${t.quote}"` : `"Listening together…"`;
+  el.originBadge.textContent = "Listening Room";
+  el.moodBadge.textContent = "Together";
+  document.title = `${t.title || "Now playing"} | Peace`;
+  document.querySelectorAll(".song-row").forEach(r => {
+    r.classList.toggle("active", Number(r.dataset.index) === currentIdx);
+  });
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: t.title || "Now playing",
+      artist: t.artist || "",
+      album: "Listening Room · Peace",
+      artwork: [{ src:`https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`, sizes:"480x360", type:"image/jpeg" }],
+    });
+  }
+}
+
+window.PeaceAPI = {
+  isReady:    () => playerReady,
+  hasStarted: () => started,
+  getTime:    () => (playerReady ? (player.getCurrentTime() || 0) : 0),
+  getVideoId: () => {
+    try { return playerReady ? ((player.getVideoData() || {}).video_id || null) : null; }
+    catch { return null; }
+  },
+  isPlaying:  () => playerReady && player.getPlayerState() === YT.PlayerState.PLAYING,
+  currentInfo: () => ({ title: el.title.textContent, artist: el.artist.textContent }),
+  currentTrack() {
+    const id = this.getVideoId();
+    return (started && id) ? { id, ...this.currentInfo() } : null;
+  },
+  load(track, startSec = 0, playing = true) {
+    if (!playerReady) return;
+    started = true;
+    el.start.classList.add("hidden");
+    const args = { videoId: track.id, startSeconds: Math.max(0, startSec || 0) };
+    if (playing) player.loadVideoById(args); else player.cueVideoById(args);
+    showCustomTrack(track);
+    if (!playing) setPlayingUI(false);
+  },
+  seekTo: (t) => { if (playerReady) player.seekTo(t, true); },
+  play:   () => { if (playerReady) player.playVideo(); },
+  pause:  () => { if (playerReady) player.pauseVideo(); },
+};
 
 // ---- Boot ----
 renderList();

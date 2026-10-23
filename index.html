@@ -12,6 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=2.0">
+  <link rel="stylesheet" href="room.css?v=1.0">
 </head>
 <body>
   <!-- ===== Ambient Scene ===== -->
@@ -45,6 +46,11 @@
         <button id="customPlBtn" class="nav-pill outline" title="Custom playlist">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
           Playlist
+        </button>
+        <button id="roomBtn" class="nav-pill outline" title="Listening room: chat and listen together">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>
+          Room
+          <span id="roomBadge" class="room-badge hidden">0</span>
         </button>
       </nav>
     </header>
@@ -207,6 +213,95 @@
     </main>
   </div>
 
+  <!-- ===== Listening Room (chat, shared songs, listen together) ===== -->
+  <aside id="roomPanel" class="room-panel" aria-label="Listening room">
+    <header class="room-head">
+      <h3>Listening Room</h3>
+      <button id="roomClose" class="modal-close" aria-label="Close">✕</button>
+    </header>
+
+    <p id="roomMsg" class="room-msg hidden" role="status"></p>
+
+    <!-- Signed out -->
+    <section id="roomSignedOut" class="room-section">
+      <p class="room-copy">Listening stays open to everyone. To chat and share songs with friends, sign in and open a private room.</p>
+      <button id="roomSignIn" class="nav-pill primary">Sign in with Google</button>
+    </section>
+
+    <!-- Signed in, not in a room -->
+    <section id="roomLobby" class="room-section hidden">
+      <div class="room-user">
+        <img id="roomUserImg" class="room-avatar hidden" alt="" referrerpolicy="no-referrer">
+        <span id="roomUserName" class="room-user-name"></span>
+        <button id="roomSignOut" class="toggle-link">Sign out</button>
+      </div>
+
+      <div id="roomInvite" class="room-card hidden">
+        <p class="room-copy">You've been invited to <strong id="roomInviteName"></strong></p>
+        <button id="roomInviteJoin" class="nav-pill primary">Join this room</button>
+      </div>
+
+      <label class="room-label" for="roomNameInput">Create a room</label>
+      <div class="room-row">
+        <input id="roomNameInput" class="room-input" type="text" maxlength="60" placeholder="Room name, e.g. Late night" autocomplete="off">
+        <button id="roomCreate" class="nav-pill primary">Create</button>
+      </div>
+
+      <label class="room-label" for="roomJoinInput">Join with a link or code</label>
+      <div class="room-row">
+        <input id="roomJoinInput" class="room-input" type="text" placeholder="Paste invite link" autocomplete="off">
+        <button id="roomJoin" class="nav-pill outline">Join</button>
+      </div>
+
+      <div id="roomRecentsWrap" class="hidden">
+        <p class="room-label">Your rooms</p>
+        <ul id="roomRecents" class="room-recents"></ul>
+      </div>
+    </section>
+
+    <!-- In a room -->
+    <section id="roomLive" class="room-section room-live hidden">
+      <div class="room-top">
+        <div class="room-top-info">
+          <h4 id="roomName" class="room-name"></h4>
+          <div class="room-members-row">
+            <div id="roomMembers" class="room-members"></div>
+            <span id="roomMemberCount" class="room-count"></span>
+          </div>
+        </div>
+        <div class="room-actions">
+          <button id="roomCopy" class="nav-pill outline">Copy invite</button>
+          <button id="roomLeave" class="nav-pill outline">Leave</button>
+        </div>
+      </div>
+
+      <button id="roomSync" class="sync-btn" aria-pressed="false">🎧 Listen together: Off</button>
+      <p id="roomSyncStatus" class="room-sync-status"></p>
+
+      <div class="room-tabs">
+        <button class="rtab active" data-tab="chat">Chat</button>
+        <button class="rtab" data-tab="songs">Songs <span id="roomSongCount"></span></button>
+      </div>
+
+      <div id="tabChat" class="rtab-body">
+        <ul id="chatList" class="chat-list"></ul>
+        <form id="chatForm" class="room-row">
+          <input id="chatInput" class="room-input" type="text" maxlength="500" placeholder="Say something…" autocomplete="off">
+          <button type="submit" class="nav-pill primary">Send</button>
+        </form>
+      </div>
+
+      <div id="tabSongs" class="rtab-body hidden">
+        <form id="songForm" class="room-row">
+          <input id="songInput" class="room-input" type="text" placeholder="Paste a YouTube link…" autocomplete="off">
+          <button type="submit" class="nav-pill primary">Add</button>
+        </form>
+        <button id="addCurrent" class="toggle-link room-add-current" type="button">+ Add the song that's playing</button>
+        <ul id="roomSongs" class="room-songs"></ul>
+      </div>
+    </section>
+  </aside>
+
   <!-- Custom Playlist Modal -->
   <div id="customModal" class="modal hidden" aria-hidden="true">
     <div class="modal-box">
@@ -227,6 +322,7 @@
     <source src="https://assets.mixkit.co/active_storage/sfx/1253/1253-preview.mp3" type="audio/mpeg">
   </audio>
 
-  <script src="app.js?v=2.0"></script>
+  <script src="app.js?v=3.0"></script>
+  <script type="module" src="room.js?v=1.0"></script>
 </body>
 </html>

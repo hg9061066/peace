@@ -15,3 +15,7 @@ desktop.ini
 *.swp
 *.swo
 *~
+
+# Firebase & Security Rules
+firestore.rules
+*.rules

@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=2.0">
-  <link rel="stylesheet" href="room.css?v=1.0">
+  <link rel="stylesheet" href="room.css?v=2.0">
 </head>
 <body>
   <!-- ===== Ambient Scene ===== -->
@@ -188,12 +188,20 @@
             <h2 class="pl-title">Peace Playlist</h2>
             <span id="count" class="pl-count">24 songs</span>
           </div>
-          <p class="pl-desc">Soft romantic Pakistani &amp; Indian indie gems</p>
+          <p id="plDesc" class="pl-desc">Soft romantic Pakistani &amp; Indian indie gems</p>
 
           <div class="pl-search">
             <svg class="search-icon" viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
             <input id="searchInput" type="search" placeholder="Search songs, artists, moods…" autocomplete="off">
           </div>
+
+          <!-- Shown only when signed in: add a song to your own playlist -->
+          <form id="plAddForm" class="pl-add hidden">
+            <input id="plAddInput" class="room-input" type="text" placeholder="Add a YouTube link to your playlist…" autocomplete="off">
+            <button type="submit" class="nav-pill primary">Add</button>
+            <label id="plAddRoomWrap" class="pl-add-room hidden"><input type="checkbox" id="plAddRoom"> Also add to the room</label>
+          </form>
+          <p id="plMsg" class="pl-msg hidden" role="status"></p>
 
           <div class="filter-row">
             <button class="ftab active" data-filter="all">All</button>
@@ -296,6 +304,7 @@
           <input id="songInput" class="room-input" type="text" placeholder="Paste a YouTube link…" autocomplete="off">
           <button type="submit" class="nav-pill primary">Add</button>
         </form>
+        <label class="room-check"><input type="checkbox" id="songAlsoMine" checked> Also save to my playlist</label>
         <button id="addCurrent" class="toggle-link room-add-current" type="button">+ Add the song that's playing</button>
         <ul id="roomSongs" class="room-songs"></ul>
       </div>
@@ -322,7 +331,7 @@
     <source src="https://assets.mixkit.co/active_storage/sfx/1253/1253-preview.mp3" type="audio/mpeg">
   </audio>
 
-  <script src="app.js?v=3.0"></script>
-  <script type="module" src="room.js?v=1.0"></script>
+  <script src="app.js?v=4.0"></script>
+  <script type="module" src="room.js?v=2.0"></script>
 </body>
 </html>

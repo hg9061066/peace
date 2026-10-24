@@ -91,11 +91,15 @@ let tracks = [...CURATED_TRACKS];
 let queue = [];
 let pos = -1;
 let currentIdx = -1;
+let personalTracks = null;   // the signed-in user's own playlist (set by room.js), or null for the default list
+let customLoaded = false;    // true while a pasted YouTube playlist is on screen instead
+const baseTracks = () => personalTracks || CURATED_TRACKS;
 
 // Listening Room (room.js) takes over playback while "Listen together" is on.
 const roomHook = () => (window.PeaceRoomHook && window.PeaceRoomHook.active) ? window.PeaceRoomHook : null;
 
 // ---- Helpers ----
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const fmt = s => { s = Math.max(0, Math.floor(s||0)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; };
 function shuffle(arr) {
   const a = arr.slice();
@@ -129,6 +133,7 @@ function playQueuePos(qp) {
 function next() {
   if (!playerReady) return;
   const rh = roomHook(); if (rh) { rh.next(); return; }
+  if (!tracks.length) return;
   if (loopOne && currentIdx >= 0) { player.seekTo(0,true); player.playVideo(); return; }
   if (pos+1 < queue.length) { playQueuePos(pos+1); }
   else {
@@ -149,6 +154,7 @@ function prev() {
 function startPlay() {
   if (!playerReady) return;
   const rh = roomHook(); if (rh) { rh.start(); return; }
+  if (!tracks.length) { el.status.textContent = "Your playlist is empty. Add a song first."; return; }
   const first = shuffleOn ? Math.floor(Math.random()*tracks.length) : 0;
   buildQueue(first); playQueuePos(0);
 }
@@ -211,21 +217,25 @@ function renderList() {
   filtered.forEach(t => {
     const origIdx = tracks.indexOf(t);
     const li = document.createElement("li");
+    li.className = "pl-item";
+    const removable = !!personalTracks && !customLoaded;
+    if (removable) li.classList.add("has-remove");
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `song-row${origIdx===currentIdx?" active":""}`;
     btn.dataset.index = origIdx;
 
     const catLabel = { pakistani:"PK", indian:"IN", "coke-studio":"CS", custom:"YT" }[t.category] || "🎵";
-    const thumb = `https://i.ytimg.com/vi/${t.id}/mqdefault.jpg`;
+    const safeId = /^[\w-]{11}$/.test(t.id) ? t.id : "";
+    const thumb = `https://i.ytimg.com/vi/${safeId}/mqdefault.jpg`;
 
     btn.innerHTML = `
       <span class="row-num">${origIdx+1}</span>
       <div class="row-thumb" style="background-image:url('${thumb}')"></div>
       <div class="row-info">
-        <span class="row-title">${t.title}</span>
+        <span class="row-title">${esc(t.title)}</span>
         <div class="row-meta">
-          <span class="row-artist">${t.artist}</span>
+          <span class="row-artist">${esc(t.artist)}</span>
           <span class="row-badge">${catLabel}</span>
         </div>
       </div>
@@ -237,6 +247,16 @@ function renderList() {
       buildQueue(origIdx); playQueuePos(0);
     });
     li.appendChild(btn);
+    if (removable) {
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "row-remove";
+      rm.title = "Remove from my playlist";
+      rm.setAttribute("aria-label", `Remove ${t.title} from my playlist`);
+      rm.textContent = "✕";
+      rm.addEventListener("click", () => { if (window.PeacePlaylist) window.PeacePlaylist.remove(t.id); });
+      li.appendChild(rm);
+    }
     el.list.appendChild(li);
   });
 }
@@ -382,9 +402,9 @@ el.customPlBtn.addEventListener("click", () => { el.customModal.classList.remove
 el.closeModalBtn.addEventListener("click", () => { el.customModal.classList.add("hidden"); el.customModal.setAttribute("aria-hidden","true"); });
 
   el.resetCuratedBtn.addEventListener("click", () => {
-  tracks=[...CURATED_TRACKS]; currentIdx=-1; renderList();
+  customLoaded=false; tracks=[...baseTracks()]; currentIdx=-1; queue=[]; pos=-1; renderList();
   el.customModal.classList.add("hidden");
-  el.status.textContent="Restored default Peace playlist!";
+  el.status.textContent = personalTracks ? "Back to your playlist" : "Restored default Peace playlist!";
 });
 
 el.applyCustomPlBtn.addEventListener("click", () => {
@@ -403,7 +423,7 @@ el.applyCustomPlBtn.addEventListener("click", () => {
       if (ids?.length) {
         clearInterval(check);
         tracks=ids.map((id,i)=>({id, title:`Track ${i+1}`, artist:"YouTube", category:"custom", mood:"Custom", quote:"From your custom playlist"}));
-        renderList(); buildQueue(0); playQueuePos(0);
+        customLoaded=true; renderList(); buildQueue(0); playQueuePos(0);
       } else if (att>40) { clearInterval(check); el.status.textContent="Couldn't load playlist — is it public?"; }
     }, 400);
   }
@@ -488,6 +508,26 @@ function showCustomTrack(t) {
   }
 }
 
+// Swaps in a new track list while keeping the play order and the current song intact.
+function applyTracks(newTracks) {
+  const curId = currentIdx >= 0 && tracks[currentIdx] ? tracks[currentIdx].id : null;
+  const oldIds = queue.map(i => tracks[i] && tracks[i].id);
+  const survivorsUpToNow = pos >= 0 ? oldIds.slice(0, pos + 1) : [];
+  tracks = newTracks;
+  const idxOf = id => tracks.findIndex(t => t.id === id);
+  const seen = new Set();
+  const kept = [];
+  oldIds.forEach(id => {
+    const i = id ? idxOf(id) : -1;
+    if (i >= 0 && !seen.has(i)) { seen.add(i); kept.push(i); }
+  });
+  const fresh = tracks.map((_, i) => i).filter(i => !seen.has(i));
+  queue = kept.concat(shuffleOn ? shuffle(fresh) : fresh);
+  pos = survivorsUpToNow.filter(id => id && idxOf(id) >= 0).length - 1;
+  currentIdx = curId ? idxOf(curId) : -1;
+  renderList();
+}
+
 window.PeaceAPI = {
   isReady:    () => playerReady,
   hasStarted: () => started,
@@ -514,6 +554,13 @@ window.PeaceAPI = {
   seekTo: (t) => { if (playerReady) player.seekTo(t, true); },
   play:   () => { if (playerReady) player.playVideo(); },
   pause:  () => { if (playerReady) player.pauseVideo(); },
+  getDefaultTracks: () => CURATED_TRACKS.map(t => ({ ...t })),
+  // room.js hands over the signed-in user's playlist here (null when signed out).
+  setPersonal(list) {
+    personalTracks = Array.isArray(list) ? list.map(t => ({ ...t })) : null;
+    if (customLoaded) return;   // a pasted YouTube playlist is showing; "Reset" will pick this up
+    applyTracks([...baseTracks()]);
+  },
 };
 
 // ---- Boot ----

@@ -5,11 +5,11 @@
 // ================================================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged,
+  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore, doc, collection, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc,
-  onSnapshot, query, orderBy, limitToLast, serverTimestamp, runTransaction,
+  getFirestore, doc, collection, getDoc, getDocs, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc,
+  onSnapshot, query, orderBy, limitToLast, serverTimestamp, runTransaction, writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -39,7 +39,13 @@ const el = {
   tabs: document.querySelectorAll(".rtab"), tabChat: $("tabChat"), tabSongs: $("tabSongs"), songCount: $("roomSongCount"),
   chatList: $("chatList"), chatForm: $("chatForm"), chatInput: $("chatInput"),
   songForm: $("songForm"), songInput: $("songInput"), addCurrent: $("addCurrent"), songs: $("roomSongs"),
+  songAlsoMine: $("songAlsoMine"),
+  del: $("roomDelete"), timer: $("roomTimer"),
+  plAddForm: $("plAddForm"), plAddInput: $("plAddInput"), plAddRoomWrap: $("plAddRoomWrap"), plAddRoom: $("plAddRoom"),
+  plMsg: $("plMsg"), plDesc: $("plDesc"),
 };
+
+const gate = { btn: $("gateSignIn"), msg: $("gateMsg"), wait: $("gateWait") };
 
 // ---------- State ----------
 let user = null;
@@ -58,6 +64,15 @@ let panelOpen = false;
 let activeTab = "chat";
 let chatReady = false;
 let unread = 0;
+let myTracks = null;             // the signed-in user's own playlist, or null until it has loaded
+let myUnsub = null;
+let inboxUnsub = null;           // songs handed to me by rooms that have closed
+let inboxDocs = [];
+const importing = new Set();
+const purging = new Set();
+let closing = false;             // this room is being deleted or has run out of time
+let timerId = null;
+const PL_DESC_DEFAULT = el.plDesc ? el.plDesc.textContent : "";
 const clientId = Math.random().toString(36).slice(2, 10);
 
 const api = () => window.PeaceAPI;
@@ -123,6 +138,8 @@ function renderPanel() {
     if (user.photoURL) { el.userImg.src = user.photoURL; show(el.userImg, true); } else { show(el.userImg, false); }
     renderRecents();
   }
+  show(el.del, !!user && !!room && room.ownerUid === user.uid);
+  renderPlaylistUI();
 }
 
 function renderRecents() {
@@ -146,7 +163,9 @@ async function showInvite() {
   try {
     const s = await getDoc(doc(db, "rooms", pendingRoomId));
     if (!s.exists()) { say("That invite link doesn't match any room."); pendingRoomId = null; show(el.invite, false); return; }
-    el.inviteName.textContent = s.data().name || "a room";
+    const d = s.data({ serverTimestamps: "estimate" });
+    if (isExpired(d)) { say("That room has expired."); pendingRoomId = null; show(el.invite, false); return; }
+    el.inviteName.textContent = d.name || "a room";
     show(el.invite, true);
   } catch (e) { say(errText(e)); }
 }
@@ -156,24 +175,45 @@ async function safely(fn) {
 }
 
 // ---------- Auth ----------
+function gateSay(text) {
+  gate.msg.textContent = text || "";
+  show(gate.msg, !!text);
+}
+
+// "loading" (checking), "signedout" (show the button), "open" (signed in). Nothing works behind a closed gate.
+function setGate(state) {
+  const open = state === "open";
+  document.body.classList.toggle("gated", !open);
+  show(gate.btn, state === "signedout");
+  show(gate.wait, state === "loading");
+  [document.querySelector(".app-wrap"), el.panel, $("customModal")].forEach((n) => { if (n) n.inert = !open; });
+  if (!open && api() && api().pause) { try { api().pause(); } catch { /* player not ready yet */ } }
+}
+
 async function signIn() {
+  gateSay("");
   const provider = new GoogleAuthProvider();
   try {
     await signInWithPopup(auth, provider);
   } catch (e) {
     if (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment") {
-      try { await signInWithRedirect(auth, provider); } catch (e2) { say(errText(e2)); }
+      try { await signInWithRedirect(auth, provider); } catch (e2) { gateSay(errText(e2)); }
     } else if (e.code !== "auth/popup-closed-by-user" && e.code !== "auth/cancelled-popup-request") {
-      say(errText(e));
+      gateSay(errText(e));
     }
   }
 }
 
+// Coming back from a redirect sign-in: show any error on the sign-in screen.
+getRedirectResult(auth).catch((e) => gateSay(errText(e)));
+
 onAuthStateChanged(auth, (u) => {
+  window.__peaceAuthReady = true;
   user = u;
-  if (!u) leaveLocal();
+  setGate(u ? "open" : "signedout");
+  if (!u) { leaveLocal(); stopPersonal(); }
   renderPanel();
-  if (u) showInvite();
+  if (u) { showInvite(); startPersonal(); }
 });
 
 // ---------- Rooms ----------
@@ -208,13 +248,26 @@ async function createRoom(name) {
 async function enterRoom(id) {
   const snap = await getDoc(doc(db, "rooms", id));
   if (!snap.exists()) { forgetRecent(id); renderRecents(); throw new Error("Room not found."); }
+  await calibrateClock();
+  const d = snap.data({ serverTimestamps: "estimate" });
   const mref = doc(db, "rooms", id, "members", user.uid);
   const mine = await getDoc(mref);
+  if (isExpired(d)) {
+    // Rooms last one hour. A member opening an old link finishes the cleanup; anyone else is turned away.
+    forgetRecent(id); renderRecents();
+    if (mine.exists()) {
+      await purgeRoom(id);
+      throw new Error("That room's hour was up, so it has been closed. Songs you added are saved to your playlist.");
+    }
+    throw new Error("That room has expired.");
+  }
   if (!mine.exists()) await setDoc(mref, memberData());
 
   leaveLocal(true);
-  const d = snap.data();
-  room = { id, name: d.name || "Room", ownerUid: d.ownerUid };
+  room = {
+    id, name: d.name || "Room", ownerUid: d.ownerUid,
+    createdMs: d.createdAt && d.createdAt.toMillis ? d.createdAt.toMillis() : serverNow(),
+  };
   pendingRoomId = null;
   saveRecent(id, room.name);
   try { history.replaceState(null, "", `${location.pathname}?room=${id}`); } catch { /* ignore */ }
@@ -223,7 +276,7 @@ async function enterRoom(id) {
   renderPanel();
   subscribe();
   renderSync();
-  calibrateClock();
+  startTimer();
 }
 
 function leaveLocal(keepUrl = false) {
@@ -231,6 +284,7 @@ function leaveLocal(keepUrl = false) {
   unsubs = [];
   room = null; members = []; songs = []; playback = null;
   syncOn = false; chatReady = false; unread = 0; errStreak = 0;
+  closing = false; stopTimer(); lockRoomUI(false);
   el.chatList.innerHTML = ""; el.songs.innerHTML = "";
   if (!keepUrl) { try { history.replaceState(null, "", location.pathname); } catch { /* ignore */ } }
   renderBadge(); renderSync(); renderPanel();
@@ -245,28 +299,180 @@ async function leaveRoom() {
 }
 
 // Measures how far this device's clock is from Firestore's server clock.
+// Uses the person's own user doc, so it works whether or not a room is open.
+let clockReady = false;
 async function calibrateClock() {
+  if (!user) return;
   try {
-    const ref = doc(db, "rooms", room.id, "members", user.uid);
+    const ref = doc(db, "users", user.uid);
     const t0 = Date.now();
-    await updateDoc(ref, { lastSeen: serverTimestamp() });
+    await setDoc(ref, { seen: serverTimestamp() }, { merge: true });
     const t1 = Date.now();
     const s = await getDocFromServer(ref);
-    const ms = s.data().lastSeen.toMillis();
-    clockOffset = ms - (t0 + t1) / 2;
+    clockOffset = s.data().seen.toMillis() - (t0 + t1) / 2;
+    clockReady = true;
   } catch { /* keep previous offset */ }
+}
+
+// ---------- Room lifetime: one hour, then everything goes ----------
+const HOUR_MS = 60 * 60 * 1000;   // keep in step with duration.value(1, 'h') in firestore.rules
+const serverNow = () => Date.now() + clockOffset;
+const isExpired = (d) => !!(clockReady && d && d.createdAt && d.createdAt.toMillis && serverNow() >= d.createdAt.toMillis() + HOUR_MS);
+
+async function inChunks(items, size, fn) {
+  for (let i = 0; i < items.length; i += size) await Promise.all(items.slice(i, i + size).map(fn));
+}
+
+function mmss(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function stopTimer() {
+  if (timerId) { clearInterval(timerId); timerId = null; }
+  if (el.timer) { el.timer.textContent = ""; el.timer.classList.remove("warn"); }
+}
+
+function startTimer() {
+  stopTimer();
+  if (!room) return;
+  timerId = setInterval(tickRoom, 1000);
+  tickRoom();
+}
+
+function lockRoomUI(on) {
+  el.live.classList.toggle("closing", on);
+  [el.chatInput, el.songInput, el.songAlsoMine, el.sync, el.addCurrent].forEach((n) => { if (n) n.disabled = on; });
+}
+
+function tickRoom() {
+  if (!room || !clockReady) return;
+  const left = room.createdMs + HOUR_MS - serverNow();
+  if (left > 0) {
+    el.timer.textContent = `This room closes in ${mmss(left)}`;
+    el.timer.classList.toggle("warn", left < 5 * 60 * 1000);
+    return;
+  }
+  el.timer.textContent = "Time's up. Closing the room…";
+  if (closing) return;
+  closing = true;
+  lockRoomUI(true);
+  const id = room.id;
+  // The creator goes first; everyone else waits a few seconds in case the creator's browser is closed.
+  const delay = room.ownerUid === user.uid ? 500 : 4000 + Math.random() * 8000;
+  setTimeout(() => autoClose(id, 0), delay);
+}
+
+async function autoClose(id, attempt) {
+  if (!room || room.id !== id) return;
+  try {
+    const s = await getDocFromServer(doc(db, "rooms", id));
+    if (!s.exists()) { roomGone(); return; }
+    await purgeRoom(id);
+    roomGone();
+  } catch (e) {
+    console.error(e);
+    if (attempt < 4) setTimeout(() => autoClose(id, attempt + 1), 5000 * (attempt + 1));
+    else say("Couldn't finish closing this room. It is locked and will be cleaned up the next time a member opens the site.");
+  }
+}
+
+// The room is gone (deleted by its creator, or its hour ran out): leave it and say so.
+function roomGone() {
+  if (!room) return;
+  forgetRecent(room.id);
+  leaveLocal();
+  say("This room has closed. Songs you added are saved to your playlist.", false);
+  if (!panelOpen) openPanel();
+}
+
+// Deletes the room and everything in it. Each song is first handed to the person who added it
+// (they get it in their own playlist), then chat, songs, members and the room itself are erased.
+async function purgeRoom(id) {
+  if (purging.has(id)) return;
+  purging.add(id);
+  try {
+    const rref = doc(db, "rooms", id);
+    const songSnap = await getDocs(collection(rref, "songs"));
+    let failed = 0;
+    await inChunks(songSnap.docs, 5, async (d) => {
+      const s = d.data();
+      if (!isVideoId(s.videoId) || !s.addedBy) return;
+      try {
+        await addDoc(collection(db, "users", s.addedBy, "inbox"), {
+          videoId: s.videoId,
+          title: String(s.title || s.videoId).slice(0, 300),
+          artist: String(s.author || "").slice(0, 200),
+          fromRoom: id,
+          songId: d.id,
+          createdAt: serverTimestamp(),
+        });
+      } catch (e) { failed++; console.error(e); }
+    });
+    if (failed) throw new Error("Couldn't pass every song on to the person who added it, so nothing was deleted. Please try again.");
+
+    const msgSnap = await getDocs(collection(rref, "messages"));
+    await inChunks(msgSnap.docs, 8, (d) => deleteDoc(d.ref).catch(() => { }));
+    await inChunks(songSnap.docs, 8, (d) => deleteDoc(d.ref).catch(() => { }));
+    const left = (await getDocs(collection(rref, "messages"))).size + (await getDocs(collection(rref, "songs"))).size;
+    if (left) throw new Error("Some chat or songs couldn't be deleted. Please try again.");
+
+    const memSnap = await getDocs(collection(rref, "members"));
+    await inChunks(memSnap.docs.filter((d) => d.id !== user.uid), 8, (d) => deleteDoc(d.ref).catch(() => { }));
+    await deleteDoc(rref);
+    await deleteDoc(doc(rref, "members", user.uid)).catch(() => { });
+  } finally { purging.delete(id); }
+}
+
+async function deleteRoomNow() {
+  if (!room || room.ownerUid !== user.uid) return;
+  const ok = window.confirm(`Delete "${room.name}" for everyone?\n\nThe chat will be erased. Songs go to the playlist of the person who added them.`);
+  if (!ok) return;
+  closing = true;
+  lockRoomUI(true);
+  el.timer.textContent = "Deleting the room…";
+  try { await purgeRoom(room.id); }
+  catch (e) { closing = false; lockRoomUI(false); tickRoom(); throw e; }
+  roomGone();
+}
+
+// Rooms from this browser's history that ran out of time while nobody had the site open.
+async function sweepExpired() {
+  if (!user || !clockReady) return;
+  for (const r of getRecents()) {
+    if (room && room.id === r.id) continue;
+    try {
+      const s = await getDoc(doc(db, "rooms", r.id));
+      if (!s.exists()) { forgetRecent(r.id); continue; }
+      if (!isExpired(s.data({ serverTimestamps: "estimate" }))) continue;
+      const m = await getDoc(doc(db, "rooms", r.id, "members", user.uid));
+      if (m.exists()) await purgeRoom(r.id);
+      forgetRecent(r.id);
+    } catch (e) { console.warn("sweep skipped", r.id, e); }
+  }
+  renderRecents();
 }
 
 // ---------- Live data ----------
 function subscribe() {
   const id = room.id;
-  const onErr = (e) => { console.error(e); say(errText(e)); };
+  // Once a room is deleted its other listeners start failing with "permission denied". That's expected, not an error.
+  const onErr = async (e) => {
+    console.error(e);
+    if (!room || room.id !== id) return;
+    if (e && e.code === "permission-denied") {
+      try { const s = await getDoc(doc(db, "rooms", id)); if (!s.exists()) { roomGone(); return; } } catch { /* fall through */ }
+    }
+    if (!closing) say(errText(e));
+  };
 
   unsubs.push(onSnapshot(doc(db, "rooms", id), (s) => {
-    if (!s.exists()) { say("This room was deleted."); leaveLocal(); return; }
+    if (!room || room.id !== id) return;
+    if (!s.exists()) { roomGone(); return; }
     const d = s.data({ serverTimestamps: "estimate" });
     room.name = d.name || room.name;
     room.ownerUid = d.ownerUid;
+    if (d.createdAt && d.createdAt.toMillis) room.createdMs = d.createdAt.toMillis();
     el.roomName.textContent = room.name;
     const pb = d.playback
       ? { ...d.playback, updatedAtMs: d.playback.updatedAt && d.playback.updatedAt.toMillis ? d.playback.updatedAt.toMillis() : null }
@@ -383,6 +589,20 @@ function renderSongs() {
     play.addEventListener("click", () => playRoomSong(s));
     row.appendChild(play);
 
+    if (user && myTracks !== null && !myTracks.some((x) => x.id === s.videoId)) {
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "rs-save";
+      save.title = "Save to my playlist";
+      save.setAttribute("aria-label", "Save to my playlist");
+      save.textContent = "+";
+      save.addEventListener("click", () => safely(async () => {
+        const r = await addToMine({ id: s.videoId, title: s.title, artist: s.author || "", category: "custom" });
+        say(r === "exists" ? "Already in your playlist." : "Saved to your playlist.", false);
+      }));
+      row.appendChild(save);
+    }
+
     if (user && (s.addedBy === user.uid || (room && room.ownerUid === user.uid))) {
       const rm = document.createElement("button");
       rm.type = "button";
@@ -446,24 +666,173 @@ async function lookupVideo(id) {
   return { title: d.title || id, author: d.author_name || "" };
 }
 
+// Returns "exists" or "added". Callers decide what to tell the person.
 async function addSongRecord({ videoId, title, author }) {
-  if (songs.some((s) => s.videoId === videoId)) { say("That song is already in the room.", false); return; }
+  if (songs.some((s) => s.videoId === videoId)) return "exists";
   await addDoc(collection(db, "rooms", room.id, "songs"), {
     videoId, title, author: author || "",
     addedBy: user.uid,
     addedByName: user.displayName || "Guest",
     addedAt: serverTimestamp(),
   });
+  return "added";
 }
 
-async function addSongFromInput(input) {
+// Adds to the room, and optionally saves the same song to the person's own playlist.
+async function addToRoom(song, alsoMine) {
+  const roomStatus = await addSongRecord(song);
+  let mine = "skipped";
+  if (alsoMine) mine = await addToMine({ id: song.videoId, title: song.title, artist: song.author || "", category: "custom" });
+  const parts = [roomStatus === "exists" ? "That song is already in the room" : "Added to the room"];
+  if (alsoMine && mine !== "skipped") parts.push(mine === "exists" ? "already in your playlist" : "saved to your playlist");
+  say(parts.join(", ") + ".", false);
+}
+
+async function addSongFromInput(input, alsoMine) {
   const id = parseVideoId(input);
   if (!id) { say("That doesn't look like a YouTube video link."); return; }
   let info;
   try { info = await lookupVideo(id); }
   catch { say("Couldn't add that one. It may be private, removed, or not allowed to be embedded."); return; }
-  await addSongRecord({ videoId: id, title: info.title, author: info.author });
+  await addToRoom({ videoId: id, title: info.title, author: info.author }, alsoMine);
 }
+
+// ---------- My playlist (saved to each person's Google account) ----------
+// Doc id = video id, so a song can't be saved twice. Ids that Firestore reserves get a prefix.
+const songDocId = (id) => (/^__.*__$/.test(id) ? `v${id}` : id);
+
+const songData = (t, order) => ({
+  videoId: t.id,
+  title: String(t.title || t.id).slice(0, 300),
+  artist: String(t.artist || "").slice(0, 200),
+  category: t.category || "custom",
+  mood: t.mood || "",
+  quote: t.quote || "",
+  order,
+  addedAt: serverTimestamp(),
+});
+
+function plSay(text, isError = false) {
+  el.plMsg.textContent = text || "";
+  el.plMsg.classList.toggle("err", !!text && isError);
+  show(el.plMsg, !!text);
+  clearTimeout(plSay.t);
+  if (text) plSay.t = setTimeout(() => plSay(""), 5000);
+}
+
+async function safelyPl(fn) {
+  try { await fn(); } catch (e) { console.error(e); plSay(errText(e), true); }
+}
+
+function renderPlaylistUI() {
+  const ready = !!user && myTracks !== null;
+  show(el.plAddForm, ready);
+  show(el.plAddRoomWrap, ready && !!room);
+  if (!ready) show(el.plMsg, false);
+  el.plDesc.textContent = ready ? "Your playlist · add or remove songs anytime" : PL_DESC_DEFAULT;
+}
+
+function stopPersonal() {
+  if (myUnsub) { try { myUnsub(); } catch { /* ignore */ } myUnsub = null; }
+  if (inboxUnsub) { try { inboxUnsub(); } catch { /* ignore */ } inboxUnsub = null; }
+  inboxDocs = []; importing.clear();
+  myTracks = null;
+  if (api() && api().setPersonal) api().setPersonal(null);
+  renderPlaylistUI();
+  renderSongs();
+}
+
+// First sign-in: copy the default Peace playlist into this account. After that the list is theirs.
+async function seedPersonal(uid) {
+  const batch = writeBatch(db);
+  api().getDefaultTracks().forEach((t, i) => {
+    if (isVideoId(t.id)) batch.set(doc(db, "users", uid, "songs", songDocId(t.id)), songData(t, i));
+  });
+  batch.set(doc(db, "users", uid), { seeded: true, seededAt: serverTimestamp() });
+  await batch.commit();
+}
+
+async function startPersonal() {
+  stopPersonal();
+  const uid = user.uid;
+  calibrateClock().then(() => sweepExpired());
+  try {
+    const s = await getDoc(doc(db, "users", uid));
+    if (!user || user.uid !== uid) return;
+    if (!s.exists() || !s.data().seeded) await seedPersonal(uid);
+  } catch (e) {
+    console.error(e);
+    say("Couldn't load your playlist. Publish the updated firestore.rules in Firebase, then reload.");
+    return;
+  }
+  if (!user || user.uid !== uid) return;
+  myUnsub = onSnapshot(query(collection(db, "users", uid, "songs"), orderBy("order")), (snap) => {
+    myTracks = snap.docs
+      .map((d) => d.data())
+      .filter((x) => isVideoId(x.videoId))
+      .map((x) => ({
+        id: x.videoId, title: x.title || x.videoId, artist: x.artist || "",
+        category: x.category || "custom", mood: x.mood || "", quote: x.quote || "",
+      }));
+    if (api() && api().setPersonal) api().setPersonal(myTracks);
+    renderPlaylistUI();
+    renderSongs();
+    importInbox();
+  }, (e) => { console.error(e); say(errText(e)); });
+  inboxUnsub = onSnapshot(collection(db, "users", uid, "inbox"), (snap) => {
+    inboxDocs = snap.docs;
+    importInbox();
+  }, (e) => console.error(e));
+}
+
+// Returns "added", "exists" or "skipped" (not signed in / playlist not loaded yet).
+async function addToMine(t) {
+  if (!user || myTracks === null) return "skipped";
+  if (myTracks.some((x) => x.id === t.id)) return "exists";
+  await setDoc(doc(db, "users", user.uid, "songs", songDocId(t.id)), songData(t, Date.now()));
+  return "added";
+}
+
+async function removeFromMine(id) {
+  if (!user) return;
+  await deleteDoc(doc(db, "users", user.uid, "songs", songDocId(id)));
+}
+
+// Songs handed over by rooms that closed land here; move each into my playlist, then clear it from the inbox.
+function importInbox() {
+  if (!user || myTracks === null || !inboxDocs.length) return;
+  const have = new Set(myTracks.map((t) => t.id));
+  const todo = inboxDocs.filter((d) => !importing.has(d.id));
+  if (!todo.length) return;
+  todo.forEach((d) => importing.add(d.id));
+  let saved = 0;
+  Promise.all(todo.map(async (d, i) => {
+    const s = d.data();
+    try {
+      if (isVideoId(s.videoId) && !have.has(s.videoId)) {
+        have.add(s.videoId);
+        await setDoc(
+          doc(db, "users", user.uid, "songs", songDocId(s.videoId)),
+          songData({ id: s.videoId, title: s.title, artist: s.artist, category: "custom" }, Date.now() + i),
+        );
+        saved++;
+      }
+      await deleteDoc(d.ref);
+    } catch (e) { console.error(e); importing.delete(d.id); }
+  })).then(() => {
+    if (saved) plSay(`Saved ${saved} song${saved === 1 ? "" : "s"} from a closed room to your playlist.`);
+  });
+}
+
+// app.js calls this from the ✕ button on each row of the playlist.
+window.PeacePlaylist = {
+  remove(id) {
+    safelyPl(async () => {
+      await removeFromMine(id);
+      plSay("Removed from your playlist.");
+    });
+  },
+};
 
 // ---------- Synced playback ----------
 const armGuard = () => { applyingUntil = Date.now() + 2500; };
@@ -645,6 +1014,8 @@ el.copy.addEventListener("click", async () => {
   catch { window.prompt("Copy this invite link:", link); }
 });
 el.leave.addEventListener("click", () => safely(leaveRoom));
+el.del.addEventListener("click", () => safely(deleteRoomNow));
+gate.btn.addEventListener("click", signIn);
 
 el.sync.addEventListener("click", () => {
   syncOn = !syncOn;
@@ -671,16 +1042,39 @@ el.songForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const v = el.songInput.value;
   el.songInput.value = "";
-  safely(() => addSongFromInput(v));
+  safely(() => addSongFromInput(v, el.songAlsoMine.checked));
 });
 
 el.addCurrent.addEventListener("click", () => safely(async () => {
   const cur = api() && api().currentTrack();
   if (!cur) { say("Nothing is playing yet.", false); return; }
-  await addSongRecord({ videoId: cur.id, title: cur.title, author: cur.artist });
+  await addToRoom({ videoId: cur.id, title: cur.title, author: cur.artist }, el.songAlsoMine.checked);
 }));
 
+// Add a song from the main playlist panel: goes to my playlist, and to the room only if ticked.
+el.plAddForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const raw = el.plAddInput.value;
+  const alsoRoom = !!room && el.plAddRoom.checked;
+  safelyPl(async () => {
+    const id = parseVideoId(raw);
+    if (!id) { plSay("That doesn't look like a YouTube video link.", true); return; }
+    let info;
+    try { info = await lookupVideo(id); }
+    catch { plSay("Couldn't add that one. It may be private, removed, or not allowed to be embedded.", true); return; }
+    el.plAddInput.value = "";
+    const mine = await addToMine({ id, title: info.title, artist: info.author, category: "custom" });
+    const parts = [mine === "exists" ? "Already in your playlist" : "Added to your playlist"];
+    if (alsoRoom) {
+      const r = await addSongRecord({ videoId: id, title: info.title, author: info.author });
+      parts.push(r === "exists" ? "already in the room" : "added to the room");
+    }
+    plSay(parts.join(", ") + ".");
+  });
+});
+
 // ---------- Boot ----------
+setGate("loading");
 renderPanel();
 renderSync();
 if (pendingRoomId) openPanel();

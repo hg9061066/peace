@@ -94,6 +94,7 @@ let currentIdx = -1;
 let personalTracks = null;   // the signed-in user's own playlist (set by room.js), or null for the default list
 let customLoaded = false;    // true while a pasted YouTube playlist is on screen instead
 const baseTracks = () => personalTracks || CURATED_TRACKS;
+const gated = () => document.body.classList.contains("gated");   // true until someone has signed in (room.js toggles it)
 
 // Listening Room (room.js) takes over playback while "Listen together" is on.
 const roomHook = () => (window.PeaceRoomHook && window.PeaceRoomHook.active) ? window.PeaceRoomHook : null;
@@ -116,7 +117,7 @@ function buildQueue(first) {
 
 // ---- Playback ----
 function playAt(idx) {
-  if (!playerReady || idx < 0 || idx >= tracks.length) return;
+  if (gated() || !playerReady || idx < 0 || idx >= tracks.length) return;
   currentIdx = idx;
   started = true;
   el.start.classList.add("hidden");
@@ -132,6 +133,7 @@ function playQueuePos(qp) {
 
 function next() {
   if (!playerReady) return;
+  if (gated()) return;
   const rh = roomHook(); if (rh) { rh.next(); return; }
   if (!tracks.length) return;
   if (loopOne && currentIdx >= 0) { player.seekTo(0,true); player.playVideo(); return; }
@@ -146,6 +148,7 @@ function next() {
 
 function prev() {
   if (!playerReady) return;
+  if (gated()) return;
   const rh = roomHook(); if (rh) { rh.prev(); return; }
   if (player.getCurrentTime()>3 || pos<=0) player.seekTo(0,true);
   else playQueuePos(pos-1);
@@ -153,6 +156,7 @@ function prev() {
 
 function startPlay() {
   if (!playerReady) return;
+  if (gated()) return;
   const rh = roomHook(); if (rh) { rh.start(); return; }
   if (!tracks.length) { el.status.textContent = "Your playlist is empty. Add a song first."; return; }
   const first = shuffleOn ? Math.floor(Math.random()*tracks.length) : 0;
@@ -161,6 +165,7 @@ function startPlay() {
 
 function togglePlay() {
   if (!playerReady) return;
+  if (gated()) return;
   if (!started) { startPlay(); return; }
   const s = player.getPlayerState();
   s===YT.PlayerState.PLAYING ? player.pauseVideo() : player.playVideo();
@@ -437,14 +442,14 @@ el.toggleScreenBtn.addEventListener("click", () => {
 
 // Keyboard
 document.addEventListener("keydown", e => {
-  if (e.target.tagName==="INPUT") return;
+  if (gated() || e.target.tagName==="INPUT") return;
   if (e.code==="Space"&&e.target.tagName!=="BUTTON") { e.preventDefault(); togglePlay(); }
   else if (e.code==="ArrowRight") el.next.click();
   else if (e.code==="ArrowLeft")  el.prev.click();
 });
 
 if ("mediaSession" in navigator) {
-  navigator.mediaSession.setActionHandler("play",        ()=>started ? player.playVideo() : startPlay());
+  navigator.mediaSession.setActionHandler("play",        ()=>{ if (gated()) return; started ? player.playVideo() : startPlay(); });
   navigator.mediaSession.setActionHandler("pause",       ()=>started && player.pauseVideo());
   navigator.mediaSession.setActionHandler("nexttrack",   ()=>el.next.click());
   navigator.mediaSession.setActionHandler("previoustrack",()=>el.prev.click());

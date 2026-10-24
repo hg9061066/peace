@@ -12,9 +12,21 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=2.0">
-  <link rel="stylesheet" href="room.css?v=2.0">
+  <link rel="stylesheet" href="room.css?v=3.0">
 </head>
-<body>
+<body class="gated">
+  <!-- ===== Sign-in gate: nothing on the site works until someone has signed in ===== -->
+  <div id="authGate" class="auth-gate" role="dialog" aria-modal="true" aria-labelledby="gateTitle">
+    <div class="gate-card">
+      <div class="brand-icon">♫</div>
+      <h2 id="gateTitle">PEACE · SUKOON</h2>
+      <p class="gate-copy">Sign in with Google to listen, keep your own playlist and join listening rooms.</p>
+      <p id="gateWait" class="gate-wait">Checking your sign-in…</p>
+      <button id="gateSignIn" class="nav-pill primary hidden" type="button">Sign in with Google</button>
+      <p id="gateMsg" class="gate-msg hidden" role="alert"></p>
+    </div>
+  </div>
+
   <!-- ===== Ambient Scene ===== -->
   <div class="scene-backdrop">
     <div class="scene-image"></div>
@@ -276,10 +288,12 @@
             <div id="roomMembers" class="room-members"></div>
             <span id="roomMemberCount" class="room-count"></span>
           </div>
+          <p id="roomTimer" class="room-timer"></p>
         </div>
         <div class="room-actions">
           <button id="roomCopy" class="nav-pill outline">Copy invite</button>
           <button id="roomLeave" class="nav-pill outline">Leave</button>
+          <button id="roomDelete" class="nav-pill outline danger hidden" title="Delete this room and its chat for everyone">Delete room</button>
         </div>
       </div>
 
@@ -331,7 +345,16 @@
     <source src="https://assets.mixkit.co/active_storage/sfx/1253/1253-preview.mp3" type="audio/mpeg">
   </audio>
 
-  <script src="app.js?v=4.0"></script>
-  <script type="module" src="room.js?v=2.0"></script>
+  <script>
+    // If the sign-in library never loads (offline, blocked), say so instead of waiting forever.
+    setTimeout(function () {
+      if (document.body.classList.contains('gated') && !window.__peaceAuthReady) {
+        var w = document.getElementById('gateWait');
+        if (w) w.textContent = "Sign-in is taking too long. Check your connection and reload the page.";
+      }
+    }, 10000);
+  </script>
+  <script src="app.js?v=5.0"></script>
+  <script type="module" src="room.js?v=3.0"></script>
 </body>
 </html>
